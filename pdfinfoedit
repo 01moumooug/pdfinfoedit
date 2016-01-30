@@ -4,9 +4,9 @@ from argparse import ArgumentParser
 from os import environ as env
 from tempfile import NamedTemporaryFile, mkstemp
 from shutil import move
-from html import unescape, escape
+from html import unescape
 
-def flusher(d, entry):
+def entry_setter(d, entry):
     def fn():
         if entry['key']:
             d[entry['key']] = entry['value']
@@ -24,51 +24,81 @@ def value_setter(entry):
         entry['value'] = v
     return fn
 
+def parse_dump(dump):
+    info = {}
+    entry = {'key': None, 'value': None}
+    add_entry = entry_setter(info, entry)
+    set_key = key_setter(entry)
+    set_value = value_setter(entry)
+
+    for line in dump.split("\n"):
+        if line == 'InfoBegin':
+            add_entry()
+        if line.startswith('InfoKey:'):
+            set_key(line.partition(':')[2].strip())
+        if line.startswith('InfoValue:'):
+            set_value(line.partition(':')[2].strip())
+    return info
+
+def write_dict(fp, d):
+    for k, v in sorted(d.items()):
+        fp.write(k)
+        fp.write(': ')
+        fp.write(unescape(v))
+        fp.write('\n')
+    fp.flush()
+
+def parse_dict(fp):
+    for line in fp:
+        key, delim, value = line.partition(':')
+        if key:
+            yield key, value
+
+def merge(old, new):
+    info = {}
+    for k in old:
+        info[k] = new.get(k, '')
+    return info
+
+def write_dump(fp, info):
+    buff = []
+    append = buff.append
+    for k, v in info.items():
+        append('InfoBegin')
+        append('InfoKey: ' + k)
+        append('InfoValue: ' + v.strip())
+
+    fp.write("\n".join(buff))
+    fp.flush()
+
+def call_editor(path):
+    editor = env.get('EDITOR')
+    if not editor:
+        print("$EDITOR is not set.")
+        editor = input("Editor Command: ").strip()
+    subprocess.call([editor, tmp.name])
+
 argparser = ArgumentParser()
 argparser.add_argument('input')
 argparser.add_argument('output', nargs='?')
 args = argparser.parse_args()
 
-lines = subprocess.check_output(['pdftk', args.input, 'dump_data'])
-lines = lines.decode('utf-8').split("\n")
-
-info = {}
-entry = {'key': None, 'value': None}
-flush = flusher(info, entry)
-set_key = key_setter(entry)
-set_value = value_setter(entry)
-
-for line in lines:
-    if line == 'InfoBegin':
-        flush()
-    if line.startswith('InfoKey:'):
-        set_key(line.partition(':')[2].strip())
-    if line.startswith('InfoValue:'):
-        set_value(line.partition(':')[2].strip())
+dump = subprocess.check_output(['pdftk', args.input, 'dump_data'])
+dump = dump.decode('utf-8')
+info = parse_dump(dump)
 
 tmp = NamedTemporaryFile(mode='w+', encoding='utf-8')
-for k, v in sorted(info.items()):
-    tmp.write(k)
-    tmp.write(': ')
-    tmp.write(unescape(v))
-    tmp.write('\n')
-tmp.flush()
-
-subprocess.call([env['EDITOR'], tmp.name])
-
-buff = []
-append = buff.append
-tmp.seek(0)
-for line in tmp:
-    key, delim, value = line.partition(':')
-    if key and value:
-        append('InfoBegin')
-        append('InfoKey: ' + key)
-        append('InfoValue: ' + value.strip())
 
 tmp.seek(0)
-tmp.write("\n".join(buff))
-tmp.flush()
+write_dict(tmp, info)
+
+call_editor(tmp.name)
+
+tmp.seek(0)
+info = merge(info, dict(parse_dict(tmp)))
+
+tmp.seek(0)
+write_dump(tmp, info)
 
 if args.output is None:
     handle, tmp_output = mkstemp()
