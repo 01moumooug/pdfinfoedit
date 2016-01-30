@@ -50,14 +50,18 @@ def write_dict(fp, d):
 
 def parse_dict(fp):
     for line in fp:
+        line = line.strip()
+        if not line:
+            continue
         key, delim, value = line.partition(':')
         if key:
             yield key, value
 
 def merge(old, new):
-    info = {}
+    info = new.copy()
     for k in old:
-        info[k] = new.get(k, '')
+        if k not in new:
+            info[k] = ''
     return info
 
 def write_dump(fp, info):
