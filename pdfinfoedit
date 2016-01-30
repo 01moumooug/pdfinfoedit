@@ -2,6 +2,7 @@
 import subprocess
 from argparse import ArgumentParser
 from os import environ as env
+from sys import exit, stderr
 from tempfile import NamedTemporaryFile, mkstemp
 from shutil import move
 from html import unescape
@@ -82,6 +83,15 @@ def call_editor(path):
         print("$EDITOR is not set.")
         editor = input("Editor Command: ").strip()
     subprocess.call([editor, tmp.name])
+
+def check_pdftk():
+    try:
+        subprocess.check_output(['pdftk', '--version'])
+    except OSError:
+        print('pdftk is not found', file=stderr)
+        exit(1)
+
+check_pdftk()
 
 argparser = ArgumentParser()
 argparser.add_argument('input')
