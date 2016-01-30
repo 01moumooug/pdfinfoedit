@@ -38,6 +38,7 @@ def parse_dump(dump):
             set_key(line.partition(':')[2].strip())
         if line.startswith('InfoValue:'):
             set_value(line.partition(':')[2].strip())
+    add_entry()
     return info
 
 def write_dict(fp, d):
