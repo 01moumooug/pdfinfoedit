@@ -4,6 +4,7 @@ from argparse import ArgumentParser
 from os import environ as env
 from tempfile import NamedTemporaryFile, mkstemp
 from shutil import move
+from html import unescape, escape
 
 def flusher(d, entry):
     def fn():
@@ -45,11 +46,11 @@ for line in lines:
     if line.startswith('InfoValue:'):
         set_value(line.partition(':')[2].strip())
 
-tmp = NamedTemporaryFile(mode='w+')
+tmp = NamedTemporaryFile(mode='w+', encoding='utf-8')
 for k, v in sorted(info.items()):
     tmp.write(k)
     tmp.write(': ')
-    tmp.write(v)
+    tmp.write(unescape(v))
     tmp.write('\n')
 tmp.flush()
 
@@ -71,7 +72,7 @@ tmp.flush()
 
 if args.output is None:
     handle, tmp_output = mkstemp()
-    subprocess.call(['pdftk', args.input, 'update_info', tmp.name, 'output', tmp_output])
+    subprocess.call(['pdftk', args.input, 'update_info_utf8', tmp.name, 'output', tmp_output])
     move(tmp_output, args.input)
 else:
-    subprocess.call(['pdftk', args.input, 'update_info', tmp.name, 'output', args.output])
+    subprocess.call(['pdftk', args.input, 'update_info_utf8', tmp.name, 'output', args.output])
