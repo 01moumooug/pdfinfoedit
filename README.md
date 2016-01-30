@@ -1,1 +1,3 @@
-Simple PDF document information editor written in Python2. pyPDF is required.
+Simple script to edit pdf document information dictionary.
+
+pdftk is required.

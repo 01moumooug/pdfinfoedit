@@ -1,187 +1,77 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
+import subprocess
+from argparse import ArgumentParser
+from os import environ as env
+from tempfile import NamedTemporaryFile, mkstemp
+from shutil import move
 
-import Tkinter as tk
-import tkFileDialog
-import tkMessageBox
+def flusher(d, entry):
+    def fn():
+        if entry['key']:
+            d[entry['key']] = entry['value']
+            entry['key']    = None
+            entry['value']  = None
+    return fn
 
-from sys           import argv
-from os.path       import isfile, basename
-from pyPdf         import PdfFileReader, PdfFileWriter
-from pyPdf.generic import NameObject, createStringObject
-from collections   import defaultdict
+def key_setter(entry):
+    def fn(k):
+        entry['key'] = k
+    return fn
 
-ALL=tk.W+tk.E+tk.S+tk.N
+def value_setter(entry):
+    def fn(v):
+        entry['value'] = v
+    return fn
 
-class Model (object):
+argparser = ArgumentParser()
+argparser.add_argument('input')
+argparser.add_argument('output', nargs='?')
+args = argparser.parse_args()
 
-    def __init__ (self):
-        self.callbacks = defaultdict(tuple)
-        self.filePath  = ''
+lines = subprocess.check_output(['pdftk', args.input, 'dump_data'])
+lines = lines.decode('utf-8').split("\n")
 
-    def selectFile (self, path):
-        if not path: return
-        with open(path, 'rb') as rh:
-            pdf = PdfFileReader(rh)
-            self.filePath = path
-            self.metaData = pdf.getDocumentInfo() or {}
+info = {}
+entry = {'key': None, 'value': None}
+flush = flusher(info, entry)
+set_key = key_setter(entry)
+set_value = value_setter(entry)
 
-    def bind (self, name, callback):
-        self.callbacks[name] += (callback,)
+for line in lines:
+    if line == 'InfoBegin':
+        flush()
+    if line.startswith('InfoKey:'):
+        set_key(line.partition(':')[2].strip())
+    if line.startswith('InfoValue:'):
+        set_value(line.partition(':')[2].strip())
 
-    def save (self, path, data):
-        if not path: return
-        with open(self.filePath, 'rb') as rh, open(path, 'wb') as wh:
-            source = PdfFileReader(rh)
-            target = PdfFileWriter()
-            for page in range(source.getNumPages()):
-                target.addPage(source.getPage(page))
-            meta = target._info.getObject()
-            del meta["/Producer"]
-            for k, v in data.iteritems():
-                meta[NameObject(k)] = createStringObject(v)
-            target.write(wh)
+tmp = NamedTemporaryFile(mode='w+')
+for k, v in sorted(info.items()):
+    tmp.write(k)
+    tmp.write(': ')
+    tmp.write(v)
+    tmp.write('\n')
+tmp.flush()
 
-    def __setattr__ (self, name, value):
-        oldValue = getattr(self, name, None)
-        super(Model, self).__setattr__(name, value)
-        if name in self.callbacks:
-            for callback in self.callbacks[name]: callback()
+subprocess.call([env['EDITOR'], tmp.name])
 
+buff = []
+append = buff.append
+tmp.seek(0)
+for line in tmp:
+    key, delim, value = line.partition(':')
+    if key and value:
+        append('InfoBegin')
+        append('InfoKey: ' + key)
+        append('InfoValue: ' + value.strip())
 
-class App:
-    metaDataRows = tuple()
-    def __init__ (self, model, master):
-        self.master    = master
-        self.model     = model
-        self.frame     = tk.Frame(master)
-        self.frameHead = tk.Frame(self.frame)
-        self.frameBody = tk.Frame(self.frame)
-        self.frameFoot = tk.Frame(self.frame)
+tmp.seek(0)
+tmp.write("\n".join(buff))
+tmp.flush()
 
-        self.btnOpen   = tk.Button(self.frameHead, text="Open", command=self.selectFile, underline=0)
-        self.btnSave   = tk.Button(self.frameHead, text="Save", command=self.save, underline=0)
-        self.btnCancel = tk.Button(self.frameHead, text="Quit", command=self.frame.quit, underline=0)
-        self.labelPath = tk.Label(self.frameHead, relief=tk.SUNKEN)
-        self.btnAdd    = tk.Button(self.frameFoot, text="Add a field",    command=self.add)
-
-        self.master.bind("<Control-o>", self.selectFile)
-        self.master.bind("<Command-o>", self.selectFile)
-        self.master.bind("<Control-q>", lambda event: self.frame.quit())
-        self.master.bind("<Command-q>", lambda event: self.frame.quit())
-        self.doLayout()
-
-        self.model.bind('metaData', self.showMetadata)
-        self.model.bind('filePath', self.setBtnStates)
-        self.model.bind('filePath', self.showFilePath)
-
-        self.setBtnStates()
-        self.showFilePath()
-
-    def doLayout (self):
-        headBtnStyles = dict(in_=self.frameHead)
-        self.btnOpen.grid(row=0, column=0, sticky=ALL)
-        self.btnSave.grid(row=0, column=1, sticky=ALL)
-        self.btnCancel.grid(row=0, column=2, sticky=ALL)
-        self.labelPath.grid(row=1, columnspan=3, sticky=ALL)
-        self.frameHead.grid_columnconfigure(0, weight=1)
-        self.frameHead.grid_columnconfigure(1, weight=1)
-        self.frameHead.grid_columnconfigure(2, weight=1)
-        self.frameHead.pack(fill=tk.X, expand=1)
-        self.frameBody.pack(fill=tk.X, expand=1)
-        self.frameFoot.pack(fill=tk.X, expand=1)
-        self.frame.pack(fill=tk.X, expand=1)
-        self.btnAdd.pack(fill=tk.X, expand=1)
-
-    def add (self):
-        self.addMetadataRow('', '')
-
-    def setBtnStates (self):
-        if isfile(self.model.filePath or ''):
-            self.btnAdd.config(state=tk.NORMAL)
-            self.btnSave.config(state=tk.NORMAL)
-            self.master.bind("<Control-s>", self.save)
-            self.master.bind("<Command-s>", self.save)
-        else:
-            self.btnAdd.config(state=tk.DISABLED)
-            self.btnSave.config(state=tk.DISABLED)
-            self.master.unbind("<Control-s>")
-            self.master.unbind("<Command-s>")
-
-    def addMetadataRow (self, key, value):
-        self.metaDataRows += (
-            MetadataRow(
-                parent=self.frameBody,
-                key=key, value=value,
-                onDestroy=self.onDestroyMetadatRow
-            ),
-        )
-
-    def onDestroyMetadatRow (self, theRow):
-        self.metaDataRows = tuple(row for row in self.metaDataRows if row is not theRow)
-
-    def selectFile (self, event=None, path=None):
-        try:
-            self.model.selectFile(path or tkFileDialog.askopenfilename(filetypes=[('PDF Documents', '*.pdf')]))
-        except IOError as e:
-            if e.errno == 22:
-                tkMessageBox.showerror("Open failed", "Invalid file")
-            else:
-                tkMessageBox.showerror("Open failed", repr(e.message))
-
-    def showFilePath (self):
-        self.labelPath.config(text=self.model.filePath or "No file chosen")
-
-    def showMetadata (self):
-        rows = self.metaDataRows
-        for row in rows: row.destroy()
-        for k, v in self.model.metaData.iteritems():
-            self.addMetadataRow(k, v)
-
-    def save (self, event=None):
-        target = tkFileDialog.asksaveasfilename(
-            initialfile=basename(self.model.filePath),
-            filetypes=[('PDF Document', '*.pdf')]
-        )
-        try:
-            self.model.save(target, dict(row.item() for row in self.metaDataRows))
-        except Exception:
-            pass
-        else:
-            self.model.filePath = target
-
-class MetadataRow:
-    def __init__ (self, parent, key, value, onDestroy):
-        self.onDestroy  = onDestroy
-        self.frame      = tk.Frame(parent)
-        self.varKey     = tk.StringVar()
-        self.varValue   = tk.StringVar()
-        self.entryKey   = tk.Entry(self.frame, textvariable=self.varKey, width=10)
-        self.entryValue = tk.Entry(self.frame, textvariable=self.varValue)
-        self.btnDelete  = tk.Button(self.frame, text="x", command=self.destroy, padx=10, pady=0, relief=tk.FLAT)
-
-        self.varKey.set(key.lstrip('/'))
-        self.varValue.set(value)
-
-        self.frame.pack(expand=1)
-        self.entryKey.pack(side=tk.LEFT)
-        self.entryValue.pack(side=tk.LEFT)
-        self.btnDelete.pack(side=tk.LEFT)
-
-    def destroy (self):
-        self.onDestroy(self)
-        self.entryKey.destroy()
-        self.entryValue.destroy()
-        self.btnDelete.destroy()
-        self.frame.destroy()
-
-    def item (self):
-        return '/' + self.varKey.get().lstrip('/'), self.varValue.get()
-
-root  = tk.Tk()
-root.wm_title('PDF info edit')
-root.resizable(0, 0)
-model = Model()
-app   = App(model, root)
-if len(argv) > 1:
-    app.selectFile(path=argv[1])
-root.mainloop()
+if args.output is None:
+    handle, tmp_output = mkstemp()
+    subprocess.call(['pdftk', args.input, 'update_info', tmp.name, 'output', tmp_output])
+    move(tmp_output, args.input)
+else:
+    subprocess.call(['pdftk', args.input, 'update_info', tmp.name, 'output', args.output])
